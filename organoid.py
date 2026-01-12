@@ -93,7 +93,9 @@ def generate_visit_dates(start_date, template):
             visits.append({
                 "day": current_day,
                 "date": visit_date,
-                "is_weekend": visit_date.weekday() >= 5
+                "is_weekend": visit_date.weekday() >= 5,
+                "selected_protocol": None,  # 사용자가 선택한 프로토콜
+                "memo": ""  # 사용자 메모
             })
             current_day += period["interval"]
     
@@ -632,10 +634,10 @@ elif menu == "📊 캘린더 뷰":
         # 달력 시작일 (월요일부터 시작하도록 조정)
         calendar_start = first_day - timedelta(days=first_day.weekday())
         
-        # 날짜별 방문 정리
+        # 날짜별 방문 정리 (schedule_idx와 visit_idx 포함)
         calendar_data = {}
-        for schedule in active_schedules:
-            for visit in schedule['visits']:
+        for schedule_idx, schedule in enumerate(active_schedules):
+            for visit_idx, visit in enumerate(schedule['visits']):
                 visit_date = datetime.strptime(visit['date'], "%Y-%m-%d").date()
                 
                 if calendar_start <= visit_date <= last_day + timedelta(days=7):
@@ -645,16 +647,28 @@ elif menu == "📊 캘린더 뷰":
                     # 프로토콜 정보 가져오기
                     template_name = schedule['template']
                     day_num = str(visit['day'])
-                    protocol_info = None
                     
+                    # 기본 프로토콜 (템플릿에서)
+                    default_protocol = None
                     if template_name in protocols and day_num in protocols[template_name]:
-                        protocol_info = protocols[template_name][day_num]
+                        default_protocol = protocols[template_name][day_num]
+                    
+                    # 사용자가 선택한 프로토콜 (있으면)
+                    selected_protocol_day = visit.get('selected_protocol', None)
+                    selected_protocol = None
+                    if selected_protocol_day and template_name in protocols and selected_protocol_day in protocols[template_name]:
+                        selected_protocol = protocols[template_name][selected_protocol_day]
                     
                     calendar_data[visit_date].append({
+                        "schedule_idx": schedule_idx,
+                        "visit_idx": visit_idx,
                         "name": schedule['name'],
                         "day": visit['day'],
                         "template": template_name,
-                        "protocol": protocol_info
+                        "default_protocol": default_protocol,
+                        "selected_protocol": selected_protocol,
+                        "selected_protocol_day": selected_protocol_day,
+                        "memo": visit.get('memo', '')
                     })
         
         # CSS 스타일
@@ -731,28 +745,95 @@ elif menu == "📊 캘린더 뷰":
                     if day_date in calendar_data:
                         visits = calendar_data[day_date]
                         
-                        for visit in visits:
-                            # 간단한 요약 표시
-                            visit_summary = f"{visit['name']} (D{visit['day']})"
+                        if len(visits) > 0:
+                            st.caption(f"방문 {len(visits)}건")
+                        
+                        for visit_data in visits:
+                            schedule_idx = visit_data['schedule_idx']
+                            visit_idx = visit_data['visit_idx']
                             
-                            # Expander로 프로토콜 상세 표시
+                            # 간단한 요약 표시
+                            visit_summary = f"{visit_data['name']}(D{visit_data['day']})"
+                            
+                            # 각 방문마다 고유 키 생성
+                            unique_key = f"{day_date}_{schedule_idx}_{visit_idx}"
+                            
+                            # Expander로 상세 정보 표시
                             with st.expander(f"📌 {visit_summary}", expanded=False):
-                                st.caption(f"템플릿: {visit['template']}")
+                                st.caption(f"**{visit_data['template']}** 템플릿")
                                 
-                                if visit['protocol']:
-                                    st.markdown(f"**{visit['protocol']['title']}**")
-                                    st.divider()
-                                    
-                                    # 프로토콜 내용을 라인별로 표시
-                                    protocol_lines = visit['protocol']['protocol'].split('\n')
+                                st.divider()
+                                
+                                # 프로토콜 선택
+                                st.markdown("**📝 프로토콜**")
+                                
+                                # 사용 가능한 프로토콜 목록 (현재 템플릿의)
+                                template_name = visit_data['template']
+                                available_protocols = {}
+                                
+                                if template_name in protocols:
+                                    available_protocols = protocols[template_name]
+                                
+                                protocol_options = ["(기본 프로토콜)"] + [f"Day {day}: {p['title']}" for day, p in sorted(available_protocols.items(), key=lambda x: int(x[0]))]
+                                protocol_days = [None] + [day for day in sorted(available_protocols.keys(), key=lambda x: int(x))]
+                                
+                                # 현재 선택된 프로토콜 인덱스 찾기
+                                current_selection = 0
+                                if visit_data['selected_protocol_day']:
+                                    try:
+                                        current_selection = protocol_days.index(visit_data['selected_protocol_day'])
+                                    except ValueError:
+                                        current_selection = 0
+                                
+                                selected_protocol_idx = st.selectbox(
+                                    "프로토콜 선택",
+                                    range(len(protocol_options)),
+                                    index=current_selection,
+                                    format_func=lambda x: protocol_options[x],
+                                    key=f"protocol_{unique_key}",
+                                    label_visibility="collapsed"
+                                )
+                                
+                                selected_protocol_day_key = protocol_days[selected_protocol_idx]
+                                
+                                # 선택된 프로토콜 표시
+                                if selected_protocol_day_key:
+                                    protocol_to_show = available_protocols[selected_protocol_day_key]
+                                elif visit_data['default_protocol']:
+                                    protocol_to_show = visit_data['default_protocol']
+                                else:
+                                    protocol_to_show = None
+                                
+                                if protocol_to_show:
+                                    st.markdown(f"**{protocol_to_show['title']}**")
+                                    protocol_lines = protocol_to_show['protocol'].split('\n')
                                     for line in protocol_lines:
                                         if line.strip():
-                                            st.markdown(f"- {line.strip()}")
+                                            st.markdown(f"  {line.strip()}")
                                 else:
                                     st.info("프로토콜 없음")
-                                    st.caption("프로토콜 관리 메뉴에서 추가하세요")
-                    
-                    st.markdown("---")
+                                
+                                st.divider()
+                                
+                                # 메모
+                                st.markdown("**💬 메모**")
+                                memo = st.text_area(
+                                    "메모",
+                                    value=visit_data['memo'],
+                                    height=80,
+                                    key=f"memo_{unique_key}",
+                                    label_visibility="collapsed",
+                                    placeholder="메모..."
+                                )
+                                
+                                # 저장 버튼
+                                if st.button("💾 저장", key=f"save_{unique_key}", use_container_width=True):
+                                    # 스케줄 업데이트
+                                    schedules[schedule_idx]['visits'][visit_idx]['selected_protocol'] = selected_protocol_day_key
+                                    schedules[schedule_idx]['visits'][visit_idx]['memo'] = memo
+                                    save_schedules(schedules)
+                                    st.success("✅")
+                                    st.rerun()
             
             current_date += timedelta(days=7)
             
