@@ -9,6 +9,7 @@ import io
 DATA_FILE = Path("schedules_data.json")
 TEMPLATE_FILE = Path("schedule_templates.json")
 PROTOCOL_FILE = Path("protocols.json")
+PEOPLE_FILE = Path("people.json")
 
 # 기본 Organoid 템플릿
 DEFAULT_ORGANOID_TEMPLATE = {
@@ -37,6 +38,12 @@ DEFAULT_ORGANOID_PROTOCOLS = {
         "protocol": "1. TrypLE로 세포 분리 (37°C, 5분)\n2. 원심분리 (300g, 5분)\n3. 신선한 Matrigel에 재현탁\n4. 새 plate에 파종"
     }
 }
+
+# 색상 팔레트 (사람별 배정)
+PERSON_COLORS = [
+    "🔴", "🟠", "🟡", "🟢", "🔵", "🟣", "🟤", "⚫", 
+    "🔶", "🟨", "🟩", "🟦", "🟪", "⬛", "🟥", "🟧"
+]
 
 def load_templates():
     """템플릿 로드"""
@@ -70,6 +77,18 @@ def save_protocols(protocols):
     with open(PROTOCOL_FILE, 'w', encoding='utf-8') as f:
         json.dump(protocols, f, ensure_ascii=False, indent=2)
 
+def load_people():
+    """사람 목록 로드"""
+    if PEOPLE_FILE.exists():
+        with open(PEOPLE_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return []
+
+def save_people(people):
+    """사람 목록 저장"""
+    with open(PEOPLE_FILE, 'w', encoding='utf-8') as f:
+        json.dump(people, f, ensure_ascii=False, indent=2)
+
 def load_schedules():
     """저장된 스케줄 로드"""
     if DATA_FILE.exists():
@@ -95,7 +114,8 @@ def generate_visit_dates(start_date, template):
                 "date": visit_date,
                 "is_weekend": visit_date.weekday() >= 5,
                 "selected_protocol": None,  # 사용자가 선택한 프로토콜
-                "memo": ""  # 사용자 메모
+                "memo": "",  # 사용자 메모
+                "assigned_people": []  # 배정된 사람들
             })
             current_day += period["interval"]
     
@@ -145,13 +165,14 @@ st.title("🧬 Organoid Schedule Manager")
 # 사이드바: 메뉴
 menu = st.sidebar.radio(
     "메뉴",
-    ["📅 스케줄 현황", "➕ 새 라인 추가", "📋 템플릿 관리", "📝 프로토콜 관리", "📊 캘린더 뷰"]
+    ["📅 스케줄 현황", "➕ 새 라인 추가", "📋 템플릿 관리", "📝 프로토콜 관리", "👥 인원 관리", "📊 캘린더 뷰"]
 )
 
 # 데이터 로드
 templates = load_templates()
 schedules = load_schedules()
 protocols = load_protocols()
+people = load_people()
 
 # ==================== 스케줄 현황 ====================
 if menu == "📅 스케줄 현황":
@@ -527,6 +548,121 @@ elif menu == "📝 프로토콜 관리":
                 st.success(f"✅ Day {new_day} 프로토콜이 추가되었습니다!")
                 st.rerun()
 
+# ==================== 인원 관리 ====================
+elif menu == "👥 인원 관리":
+    st.header("인원 관리")
+    
+    st.write("실험 담당자를 등록하고 관리합니다. 각 사람에게 자동으로 색상이 배정됩니다.")
+    
+    tab1, tab2, tab3 = st.tabs(["인원 목록", "인원 추가", "랜덤 배정"])
+    
+    with tab1:
+        st.subheader("등록된 인원")
+        
+        if not people:
+            st.info("등록된 인원이 없습니다. '인원 추가' 탭에서 추가하세요.")
+        else:
+            for idx, person in enumerate(people):
+                col1, col2, col3 = st.columns([1, 3, 1])
+                
+                with col1:
+                    color_emoji = PERSON_COLORS[idx % len(PERSON_COLORS)]
+                    st.markdown(f"## {color_emoji}")
+                
+                with col2:
+                    st.markdown(f"### {person['name']}")
+                    if person.get('note'):
+                        st.caption(person['note'])
+                
+                with col3:
+                    if st.button("🗑️ 삭제", key=f"delete_person_{idx}"):
+                        people.pop(idx)
+                        save_people(people)
+                        st.success("삭제되었습니다!")
+                        st.rerun()
+                
+                st.divider()
+    
+    with tab2:
+        st.subheader("새 인원 추가")
+        
+        new_person_name = st.text_input("이름", placeholder="예: 김철수")
+        new_person_note = st.text_input("메모 (선택)", placeholder="예: 박사과정 / 월수금 출근")
+        
+        if st.button("➕ 인원 추가", type="primary"):
+            if not new_person_name:
+                st.error("이름을 입력하세요.")
+            elif any(p['name'] == new_person_name for p in people):
+                st.error("이미 등록된 이름입니다.")
+            else:
+                people.append({
+                    "name": new_person_name,
+                    "note": new_person_note
+                })
+                save_people(people)
+                
+                # 색상 미리보기
+                color_emoji = PERSON_COLORS[len(people) - 1 % len(PERSON_COLORS)]
+                st.success(f"✅ {color_emoji} {new_person_name} 님이 추가되었습니다!")
+                st.rerun()
+    
+    with tab3:
+        st.subheader("인원 랜덤 배정")
+        
+        if len(people) < 2:
+            st.warning("최소 2명 이상의 인원이 필요합니다. '인원 추가' 탭에서 추가하세요.")
+        else:
+            st.write("활성화된 모든 라인의 방문에 인원을 2명씩 랜덤 배정합니다.")
+            
+            active_schedules = [s for s in schedules if s.get("status") != "completed"]
+            
+            if not active_schedules:
+                st.info("활성 라인이 없습니다.")
+            else:
+                # 날짜 범위 선택
+                col1, col2 = st.columns(2)
+                with col1:
+                    assign_start = st.date_input("배정 시작일", datetime.now().date())
+                with col2:
+                    assign_end = st.date_input("배정 종료일", datetime.now().date() + timedelta(days=30))
+                
+                # 미배정 방문 수 계산
+                unassigned_count = 0
+                for schedule in active_schedules:
+                    for visit in schedule['visits']:
+                        visit_date = datetime.strptime(visit['date'], "%Y-%m-%d").date()
+                        if assign_start <= visit_date <= assign_end:
+                            if not visit.get('assigned_people') or len(visit.get('assigned_people', [])) == 0:
+                                unassigned_count += 1
+                
+                st.info(f"선택한 기간 내 미배정 방문: {unassigned_count}건")
+                
+                if st.button("🎲 랜덤 배정 시작", type="primary"):
+                    import random
+                    
+                    assigned_count = 0
+                    for schedule in active_schedules:
+                        for visit in schedule['visits']:
+                            visit_date = datetime.strptime(visit['date'], "%Y-%m-%d").date()
+                            
+                            if assign_start <= visit_date <= assign_end:
+                                # 이미 배정된 경우 스킵 (덮어쓰지 않음)
+                                if visit.get('assigned_people') and len(visit.get('assigned_people', [])) > 0:
+                                    continue
+                                
+                                # 2명 랜덤 선택
+                                selected_people = random.sample(people, min(2, len(people)))
+                                visit['assigned_people'] = [p['name'] for p in selected_people]
+                                assigned_count += 1
+                    
+                    save_schedules(schedules)
+                    st.success(f"✅ {assigned_count}건의 방문에 인원이 배정되었습니다!")
+                    st.balloons()
+                    st.rerun()
+                
+                st.divider()
+                st.caption("⚠️ 주의: 이미 배정된 방문은 덮어쓰지 않습니다. 재배정하려면 캘린더에서 개별 삭제 후 다시 배정하세요.")
+
 # ==================== 템플릿 관리 ====================
 elif menu == "📋 템플릿 관리":
     st.header("스케줄 템플릿 관리")
@@ -668,7 +804,8 @@ elif menu == "📊 캘린더 뷰":
                         "default_protocol": default_protocol,
                         "selected_protocol": selected_protocol,
                         "selected_protocol_day": selected_protocol_day,
-                        "memo": visit.get('memo', '')
+                        "memo": visit.get('memo', ''),
+                        "assigned_people": visit.get('assigned_people', [])
                     })
         
         # CSS 스타일
@@ -752,8 +889,18 @@ elif menu == "📊 캘린더 뷰":
                             schedule_idx = visit_data['schedule_idx']
                             visit_idx = visit_data['visit_idx']
                             
-                            # 간단한 요약 표시
-                            visit_summary = f"{visit_data['name']}(D{visit_data['day']})"
+                            # 배정된 인원 색상 아이콘
+                            people_icons = ""
+                            if visit_data['assigned_people']:
+                                for person_name in visit_data['assigned_people']:
+                                    # 인원 목록에서 인덱스 찾기
+                                    person_idx = next((i for i, p in enumerate(people) if p['name'] == person_name), None)
+                                    if person_idx is not None:
+                                        color_emoji = PERSON_COLORS[person_idx % len(PERSON_COLORS)]
+                                        people_icons += color_emoji
+                            
+                            # 간단한 요약 표시 (인원 아이콘 포함)
+                            visit_summary = f"{people_icons} {visit_data['name']}(D{visit_data['day']})" if people_icons else f"{visit_data['name']}(D{visit_data['day']})"
                             
                             # 각 방문마다 고유 키 생성
                             unique_key = f"{day_date}_{schedule_idx}_{visit_idx}"
@@ -761,6 +908,36 @@ elif menu == "📊 캘린더 뷰":
                             # Expander로 상세 정보 표시
                             with st.expander(f"📌 {visit_summary}", expanded=False):
                                 st.caption(f"**{visit_data['template']}** 템플릿")
+                                
+                                st.divider()
+                                
+                                # 담당자 배정
+                                st.markdown("**👥 담당자**")
+                                
+                                if not people:
+                                    st.warning("등록된 인원이 없습니다. '인원 관리' 메뉴에서 추가하세요.")
+                                else:
+                                    # 현재 배정된 사람들
+                                    current_assigned = visit_data['assigned_people']
+                                    
+                                    # 멀티셀렉트로 담당자 선택
+                                    selected_people_names = st.multiselect(
+                                        "담당자 선택",
+                                        options=[p['name'] for p in people],
+                                        default=current_assigned,
+                                        key=f"people_{unique_key}",
+                                        label_visibility="collapsed"
+                                    )
+                                    
+                                    # 선택된 사람들의 색상 표시
+                                    if selected_people_names:
+                                        color_display = ""
+                                        for person_name in selected_people_names:
+                                            person_idx = next((i for i, p in enumerate(people) if p['name'] == person_name), None)
+                                            if person_idx is not None:
+                                                color_emoji = PERSON_COLORS[person_idx % len(PERSON_COLORS)]
+                                                color_display += f"{color_emoji} {person_name}  "
+                                        st.caption(color_display)
                                 
                                 st.divider()
                                 
@@ -831,6 +1008,7 @@ elif menu == "📊 캘린더 뷰":
                                     # 스케줄 업데이트
                                     schedules[schedule_idx]['visits'][visit_idx]['selected_protocol'] = selected_protocol_day_key
                                     schedules[schedule_idx]['visits'][visit_idx]['memo'] = memo
+                                    schedules[schedule_idx]['visits'][visit_idx]['assigned_people'] = selected_people_names if people else []
                                     save_schedules(schedules)
                                     st.success("✅")
                                     st.rerun()
