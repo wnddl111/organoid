@@ -607,12 +607,13 @@ elif menu == "👥 인원 관리":
                 st.rerun()
     
     with tab3:
-        st.subheader("인원 랜덤 배정")
+        st.subheader("인원 공평 배정")
         
         if len(people) < 2:
             st.warning("최소 2명 이상의 인원이 필요합니다. '인원 추가' 탭에서 추가하세요.")
         else:
-            st.write("활성화된 모든 라인의 방문에 인원을 2명씩 랜덤 배정합니다.")
+            st.write("활성화된 모든 라인의 방문에 인원을 2명씩 **공평하게** 배정합니다.")
+            st.info("💡 평일/주말 횟수를 균등하게 분배합니다. 인원이 홀수일 경우 일부는 1명만 배정될 수 있습니다.")
             
             active_schedules = [s for s in schedules if s.get("status") != "completed"]
             
@@ -627,36 +628,115 @@ elif menu == "👥 인원 관리":
                     assign_end = st.date_input("배정 종료일", datetime.now().date() + timedelta(days=30))
                 
                 # 미배정 방문 수 계산
-                unassigned_count = 0
-                for schedule in active_schedules:
-                    for visit in schedule['visits']:
+                unassigned_visits = []
+                for schedule_idx, schedule in enumerate(active_schedules):
+                    for visit_idx, visit in enumerate(schedule['visits']):
                         visit_date = datetime.strptime(visit['date'], "%Y-%m-%d").date()
                         if assign_start <= visit_date <= assign_end:
                             if not visit.get('assigned_people') or len(visit.get('assigned_people', [])) == 0:
-                                unassigned_count += 1
+                                unassigned_visits.append({
+                                    'schedule_idx': schedule_idx,
+                                    'visit_idx': visit_idx,
+                                    'date': visit_date,
+                                    'is_weekend': visit_date.weekday() >= 5
+                                })
                 
-                st.info(f"선택한 기간 내 미배정 방문: {unassigned_count}건")
+                weekday_count = sum(1 for v in unassigned_visits if not v['is_weekend'])
+                weekend_count = sum(1 for v in unassigned_visits if v['is_weekend'])
                 
-                if st.button("🎲 랜덤 배정 시작", type="primary"):
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("미배정 방문", len(unassigned_visits))
+                with col2:
+                    st.metric("평일", weekday_count)
+                with col3:
+                    st.metric("주말", weekend_count)
+                
+                if st.button("⚖️ 공평 배정 시작", type="primary"):
                     import random
                     
-                    assigned_count = 0
-                    for schedule in active_schedules:
-                        for visit in schedule['visits']:
-                            visit_date = datetime.strptime(visit['date'], "%Y-%m-%d").date()
-                            
-                            if assign_start <= visit_date <= assign_end:
-                                # 이미 배정된 경우 스킵 (덮어쓰지 않음)
-                                if visit.get('assigned_people') and len(visit.get('assigned_people', [])) > 0:
-                                    continue
-                                
-                                # 2명 랜덤 선택
-                                selected_people = random.sample(people, min(2, len(people)))
-                                visit['assigned_people'] = [p['name'] for p in selected_people]
-                                assigned_count += 1
+                    # 각 사람의 배정 횟수 추적
+                    person_counts = {p['name']: {'weekday': 0, 'weekend': 0, 'total': 0} for p in people}
+                    
+                    # 방문을 평일/주말로 분리
+                    weekday_visits = [v for v in unassigned_visits if not v['is_weekend']]
+                    weekend_visits = [v for v in unassigned_visits if v['is_weekend']]
+                    
+                    # 랜덤 섞기
+                    random.shuffle(weekday_visits)
+                    random.shuffle(weekend_visits)
+                    
+                    def get_least_assigned_people(is_weekend, count=2):
+                        """가장 적게 배정된 사람들 선택"""
+                        if is_weekend:
+                            sorted_people = sorted(people, key=lambda p: (
+                                person_counts[p['name']]['weekend'],
+                                person_counts[p['name']]['total']
+                            ))
+                        else:
+                            sorted_people = sorted(people, key=lambda p: (
+                                person_counts[p['name']]['weekday'],
+                                person_counts[p['name']]['total']
+                            ))
+                        
+                        # 동점자가 많으면 랜덤
+                        min_count = person_counts[sorted_people[0]['name']]['weekend' if is_weekend else 'weekday']
+                        candidates = [p for p in sorted_people if person_counts[p['name']]['weekend' if is_weekend else 'weekday'] == min_count]
+                        
+                        if len(candidates) <= count:
+                            return [p['name'] for p in candidates]
+                        else:
+                            selected = random.sample(candidates, count)
+                            return [p['name'] for p in selected]
+                    
+                    # 평일 배정
+                    for visit in weekday_visits:
+                        selected = get_least_assigned_people(is_weekend=False, count=2)
+                        
+                        # 방문에 배정
+                        schedule = active_schedules[visit['schedule_idx']]
+                        schedule['visits'][visit['visit_idx']]['assigned_people'] = selected
+                        
+                        # 카운트 업데이트
+                        for person_name in selected:
+                            person_counts[person_name]['weekday'] += 1
+                            person_counts[person_name]['total'] += 1
+                    
+                    # 주말 배정
+                    for visit in weekend_visits:
+                        selected = get_least_assigned_people(is_weekend=True, count=2)
+                        
+                        # 방문에 배정
+                        schedule = active_schedules[visit['schedule_idx']]
+                        schedule['visits'][visit['visit_idx']]['assigned_people'] = selected
+                        
+                        # 카운트 업데이트
+                        for person_name in selected:
+                            person_counts[person_name]['weekend'] += 1
+                            person_counts[person_name]['total'] += 1
                     
                     save_schedules(schedules)
-                    st.success(f"✅ {assigned_count}건의 방문에 인원이 배정되었습니다!")
+                    
+                    # 결과 표시
+                    st.success(f"✅ {len(unassigned_visits)}건의 방문에 공평하게 배정되었습니다!")
+                    
+                    st.divider()
+                    st.subheader("배정 결과")
+                    
+                    # 테이블로 결과 표시
+                    result_data = []
+                    for person in people:
+                        name = person['name']
+                        result_data.append({
+                            "이름": name,
+                            "평일": person_counts[name]['weekday'],
+                            "주말": person_counts[name]['weekend'],
+                            "총합": person_counts[name]['total']
+                        })
+                    
+                    df = pd.DataFrame(result_data)
+                    st.dataframe(df, use_container_width=True, hide_index=True)
+                    
                     st.balloons()
                     st.rerun()
                 
