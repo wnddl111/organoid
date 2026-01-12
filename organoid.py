@@ -8,6 +8,7 @@ import io
 # 데이터 저장 경로
 DATA_FILE = Path("schedules_data.json")
 TEMPLATE_FILE = Path("schedule_templates.json")
+PROTOCOL_FILE = Path("protocols.json")
 
 # 기본 Organoid 템플릿
 DEFAULT_ORGANOID_TEMPLATE = {
@@ -19,6 +20,22 @@ DEFAULT_ORGANOID_TEMPLATE = {
         {"start_day": 25, "end_day": 42, "interval": 2, "description": "Day 25-42: 2일마다"},
         {"start_day": 43, "end_day": 150, "interval": 4, "description": "Day 43-150: 4일마다"}
     ]
+}
+
+# 기본 Organoid 프로토콜 예시
+DEFAULT_ORGANOID_PROTOCOLS = {
+    0: {
+        "title": "Day 0: 세포 파종",
+        "protocol": "1. Matrigel 해동 (4°C, 30분)\n2. 세포 계수 및 농도 조정\n3. 96-well plate에 파종\n4. 37°C, 5% CO2 배양기에 배치"
+    },
+    3: {
+        "title": "Day 3: 배지 교환",
+        "protocol": "1. 현미경으로 형태 확인\n2. 배지 절반 교환\n3. 사진 촬영 (10x)"
+    },
+    7: {
+        "title": "Day 7: 첫 계대배양",
+        "protocol": "1. TrypLE로 세포 분리 (37°C, 5분)\n2. 원심분리 (300g, 5분)\n3. 신선한 Matrigel에 재현탁\n4. 새 plate에 파종"
+    }
 }
 
 def load_templates():
@@ -36,6 +53,22 @@ def save_templates(templates):
     """템플릿 저장"""
     with open(TEMPLATE_FILE, 'w', encoding='utf-8') as f:
         json.dump(templates, f, ensure_ascii=False, indent=2)
+
+def load_protocols():
+    """프로토콜 로드"""
+    if PROTOCOL_FILE.exists():
+        with open(PROTOCOL_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    else:
+        # 기본 프로토콜만 있는 상태로 초기화
+        protocols = {"Organoid": DEFAULT_ORGANOID_PROTOCOLS}
+        save_protocols(protocols)
+        return protocols
+
+def save_protocols(protocols):
+    """프로토콜 저장"""
+    with open(PROTOCOL_FILE, 'w', encoding='utf-8') as f:
+        json.dump(protocols, f, ensure_ascii=False, indent=2)
 
 def load_schedules():
     """저장된 스케줄 로드"""
@@ -110,12 +143,13 @@ st.title("🧬 Organoid Schedule Manager")
 # 사이드바: 메뉴
 menu = st.sidebar.radio(
     "메뉴",
-    ["📅 스케줄 현황", "➕ 새 라인 추가", "📋 템플릿 관리", "📊 캘린더 뷰"]
+    ["📅 스케줄 현황", "➕ 새 라인 추가", "📋 템플릿 관리", "📝 프로토콜 관리", "📊 캘린더 뷰"]
 )
 
 # 데이터 로드
 templates = load_templates()
 schedules = load_schedules()
+protocols = load_protocols()
 
 # ==================== 스케줄 현황 ====================
 if menu == "📅 스케줄 현황":
@@ -233,10 +267,20 @@ elif menu == "➕ 새 라인 추가":
                 st.write(f"- {period['description']}")
     
     with col2:
-        search_start_date = st.date_input("희망 시작 기간", datetime.now())
-        search_days = st.slider("검색할 날짜 범위 (일)", 7, 30, 14)
+        date_selection_mode = st.radio(
+            "시작일 선택 방법",
+            ["🔍 최적 시작일 찾기", "📅 직접 날짜 지정"],
+            horizontal=True
+        )
+        
+        if date_selection_mode == "🔍 최적 시작일 찾기":
+            search_start_date = st.date_input("희망 시작 기간", datetime.now())
+            search_days = st.slider("검색할 날짜 범위 (일)", 7, 30, 14)
+        else:
+            manual_start_date = st.date_input("시작 날짜 선택", datetime.now())
     
-    if st.button("최적 시작일 찾기", type="primary"):
+    # 최적 시작일 찾기 모드
+    if date_selection_mode == "🔍 최적 시작일 찾기" and st.button("최적 시작일 찾기", type="primary"):
         if not line_name:
             st.error("라인 이름을 입력하세요.")
         else:
@@ -311,6 +355,149 @@ elif menu == "➕ 새 라인 추가":
                         st.caption(f"겹치는 라인: {overlap_text}")
                     
                     st.divider()
+    
+    # 직접 날짜 지정 모드
+    elif date_selection_mode == "📅 직접 날짜 지정":
+        if st.button("이 날짜로 시작하기", type="primary"):
+            if not line_name:
+                st.error("라인 이름을 입력하세요.")
+            else:
+                # 선택한 날짜로 방문 일정 생성
+                visits = generate_visit_dates(manual_start_date, templates[selected_template])
+                weekend_count = count_weekend_visits(visits)
+                overlaps = find_overlaps(visits, schedules)
+                overlap_total = sum(overlaps.values())
+                
+                # 미리보기
+                st.subheader("📋 생성될 스케줄 미리보기")
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("시작일", manual_start_date.strftime('%Y-%m-%d (%A)'))
+                with col2:
+                    st.metric("주말 방문", f"{weekend_count}회")
+                with col3:
+                    st.metric("기존 라인과 겹침", f"{overlap_total}회")
+                
+                if overlaps:
+                    overlap_text = ", ".join([f"{name}({count})" for name, count in overlaps.items()])
+                    st.info(f"겹치는 라인: {overlap_text}")
+                
+                st.write("**처음 5개 방문 일정:**")
+                for v in visits[:5]:
+                    weekend_str = "🔴 주말" if v["is_weekend"] else ""
+                    st.write(f"- Day {v['day']}: {v['date'].strftime('%Y-%m-%d (%A)')} {weekend_str}")
+                
+                if st.button("✅ 확인 및 추가", key="confirm_manual"):
+                    new_schedule = {
+                        "name": line_name,
+                        "template": selected_template,
+                        "start_date": manual_start_date.strftime("%Y-%m-%d"),
+                        "status": "active",
+                        "weekend_count": weekend_count,
+                        "visits": [
+                            {
+                                "day": v["day"],
+                                "date": v["date"].strftime("%Y-%m-%d"),
+                                "is_weekend": v["is_weekend"]
+                            }
+                            for v in visits
+                        ]
+                    }
+                    
+                    schedules.append(new_schedule)
+                    save_schedules(schedules)
+                    st.success(f"✅ {line_name} 라인이 추가되었습니다!")
+                    st.balloons()
+                    st.rerun()
+
+# ==================== 프로토콜 관리 ====================
+elif menu == "📝 프로토콜 관리":
+    st.header("프로토콜 관리")
+    
+    st.write("각 템플릿별로 Day에 따른 프로토콜을 저장하고 관리할 수 있습니다.")
+    
+    # 템플릿 선택
+    selected_protocol_template = st.selectbox(
+        "프로토콜을 관리할 템플릿 선택",
+        list(templates.keys())
+    )
+    
+    if selected_protocol_template not in protocols:
+        protocols[selected_protocol_template] = {}
+    
+    tab1, tab2 = st.tabs(["프로토콜 보기/수정", "새 프로토콜 추가"])
+    
+    with tab1:
+        st.subheader(f"{selected_protocol_template} 템플릿의 프로토콜")
+        
+        if not protocols[selected_protocol_template]:
+            st.info("아직 등록된 프로토콜이 없습니다. '새 프로토콜 추가' 탭에서 추가하세요.")
+        else:
+            # Day 순서대로 정렬
+            sorted_days = sorted([int(day) for day in protocols[selected_protocol_template].keys()])
+            
+            for day in sorted_days:
+                day_str = str(day)
+                protocol_data = protocols[selected_protocol_template][day_str]
+                
+                with st.expander(f"📌 Day {day}: {protocol_data.get('title', '제목 없음')}"):
+                    # 수정 가능한 형태로 표시
+                    new_title = st.text_input(
+                        "제목",
+                        value=protocol_data.get('title', ''),
+                        key=f"title_{selected_protocol_template}_{day}"
+                    )
+                    
+                    new_protocol = st.text_area(
+                        "프로토콜 내용",
+                        value=protocol_data.get('protocol', ''),
+                        height=200,
+                        key=f"protocol_{selected_protocol_template}_{day}"
+                    )
+                    
+                    col1, col2 = st.columns([1, 4])
+                    with col1:
+                        if st.button("💾 저장", key=f"save_{selected_protocol_template}_{day}"):
+                            protocols[selected_protocol_template][day_str] = {
+                                "title": new_title,
+                                "protocol": new_protocol
+                            }
+                            save_protocols(protocols)
+                            st.success("저장되었습니다!")
+                            st.rerun()
+                    
+                    with col2:
+                        if st.button("🗑️ 삭제", key=f"delete_{selected_protocol_template}_{day}"):
+                            del protocols[selected_protocol_template][day_str]
+                            save_protocols(protocols)
+                            st.success("삭제되었습니다!")
+                            st.rerun()
+    
+    with tab2:
+        st.subheader("새 프로토콜 추가")
+        
+        new_day = st.number_input("Day", min_value=0, max_value=500, value=0)
+        new_title = st.text_input("프로토콜 제목", placeholder="예: Day 0: 세포 파종")
+        new_protocol = st.text_area(
+            "프로토콜 내용",
+            placeholder="상세한 프로토콜 내용을 입력하세요...\n\n예:\n1. 준비물 확인\n2. 실험 절차\n3. 주의사항",
+            height=300
+        )
+        
+        if st.button("➕ 프로토콜 추가", type="primary"):
+            if not new_title:
+                st.error("프로토콜 제목을 입력하세요.")
+            elif str(new_day) in protocols[selected_protocol_template]:
+                st.error(f"Day {new_day}에 이미 프로토콜이 존재합니다. '프로토콜 보기/수정' 탭에서 수정하세요.")
+            else:
+                protocols[selected_protocol_template][str(new_day)] = {
+                    "title": new_title,
+                    "protocol": new_protocol
+                }
+                save_protocols(protocols)
+                st.success(f"✅ Day {new_day} 프로토콜이 추가되었습니다!")
+                st.rerun()
 
 # ==================== 템플릿 관리 ====================
 elif menu == "📋 템플릿 관리":
@@ -416,10 +603,20 @@ elif menu == "📊 캘린더 뷰":
                     if visit_date not in calendar_data:
                         calendar_data[visit_date] = []
                     
+                    # 프로토콜 정보 가져오기
+                    template_name = schedule['template']
+                    day_num = str(visit['day'])
+                    protocol_info = None
+                    
+                    if template_name in protocols and day_num in protocols[template_name]:
+                        protocol_info = protocols[template_name][day_num]
+                    
                     calendar_data[visit_date].append({
                         "name": schedule['name'],
                         "day": visit['day'],
-                        "is_weekend": visit['is_weekend']
+                        "is_weekend": visit['is_weekend'],
+                        "template": template_name,
+                        "protocol": protocol_info
                     })
         
         # 주별로 표시
@@ -432,34 +629,35 @@ elif menu == "📊 캘린더 뷰":
             
             st.subheader(f"Week {week_num + 1}: {week_start.strftime('%Y-%m-%d')} ~ {week_end.strftime('%Y-%m-%d')}")
             
-            week_data = []
+            # 날짜별 상세 정보 (프로토콜 포함)
             for i in range(7):
                 day_date = week_start + timedelta(days=i)
+                
                 if day_date in calendar_data:
                     visits = calendar_data[day_date]
-                    day_info = f"{day_date.strftime('%m/%d (%a)')}\n"
-                    day_info += f"방문: {len(visits)}건\n"
-                    day_info += "\n".join([f"- {v['name']} (D{v['day']})" for v in visits])
-                    week_data.append(day_info)
-                else:
-                    week_data.append(f"{day_date.strftime('%m/%d (%a)')}\n-")
-            
-            cols = st.columns(7)
-            for i, col in enumerate(cols):
-                with col:
-                    day_date = week_start + timedelta(days=i)
                     is_weekend = day_date.weekday() >= 5
                     
+                    # 날짜 헤더
                     if is_weekend:
-                        st.markdown(f"**:red[{week_data[i]}]**")
+                        st.markdown(f"### :red[{day_date.strftime('%Y-%m-%d (%A)')}] - 방문 {len(visits)}건")
                     else:
-                        st.text(week_data[i])
+                        st.markdown(f"### {day_date.strftime('%Y-%m-%d (%A)')} - 방문 {len(visits)}건")
+                    
+                    # 각 방문 항목
+                    for visit in visits:
+                        with st.expander(f"📌 {visit['name']} - Day {visit['day']} ({visit['template']})"):
+                            if visit['protocol']:
+                                st.write(f"**{visit['protocol']['title']}**")
+                                st.text(visit['protocol']['protocol'])
+                            else:
+                                st.info(f"Day {visit['day']}에 대한 프로토콜이 없습니다. '프로토콜 관리' 메뉴에서 추가하세요.")
+                    
+                    st.divider()
             
-            st.divider()
             current_date = week_end + timedelta(days=1)
             week_num += 1
 
 # 푸터
 st.sidebar.divider()
-st.sidebar.caption("🧬 Organoid Schedule Manager v1.0")
+st.sidebar.caption("🧬 Organoid Schedule Manager v2.0")
 st.sidebar.caption(f"활성 라인: {len([s for s in schedules if s.get('status') != 'completed'])}개")
