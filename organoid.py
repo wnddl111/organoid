@@ -358,6 +358,10 @@ elif menu == "➕ 새 라인 추가":
     
     # 직접 날짜 지정 모드
     elif date_selection_mode == "📅 직접 날짜 지정":
+        # Session state 초기화
+        if 'preview_schedule' not in st.session_state:
+            st.session_state.preview_schedule = None
+        
         if st.button("이 날짜로 시작하기", type="primary"):
             if not line_name:
                 st.error("라인 이름을 입력하세요.")
@@ -368,48 +372,76 @@ elif menu == "➕ 새 라인 추가":
                 overlaps = find_overlaps(visits, schedules)
                 overlap_total = sum(overlaps.values())
                 
-                # 미리보기
-                st.subheader("📋 생성될 스케줄 미리보기")
-                
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("시작일", manual_start_date.strftime('%Y-%m-%d (%A)'))
-                with col2:
-                    st.metric("주말 방문", f"{weekend_count}회")
-                with col3:
-                    st.metric("기존 라인과 겹침", f"{overlap_total}회")
-                
-                if overlaps:
-                    overlap_text = ", ".join([f"{name}({count})" for name, count in overlaps.items()])
-                    st.info(f"겹치는 라인: {overlap_text}")
-                
-                st.write("**처음 5개 방문 일정:**")
-                for v in visits[:5]:
-                    weekend_str = "🔴 주말" if v["is_weekend"] else ""
-                    st.write(f"- Day {v['day']}: {v['date'].strftime('%Y-%m-%d (%A)')} {weekend_str}")
-                
-                if st.button("✅ 확인 및 추가", key="confirm_manual"):
+                # Session state에 저장
+                st.session_state.preview_schedule = {
+                    "line_name": line_name,
+                    "template": selected_template,
+                    "start_date": manual_start_date,
+                    "visits": visits,
+                    "weekend_count": weekend_count,
+                    "overlaps": overlaps,
+                    "overlap_total": overlap_total
+                }
+        
+        # 미리보기 표시
+        if st.session_state.preview_schedule:
+            preview = st.session_state.preview_schedule
+            
+            st.subheader("📋 생성될 스케줄 미리보기")
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("시작일", preview["start_date"].strftime('%Y-%m-%d (%A)'))
+            with col2:
+                st.metric("주말 방문", f"{preview['weekend_count']}회")
+            with col3:
+                st.metric("기존 라인과 겹침", f"{preview['overlap_total']}회")
+            
+            if preview["overlaps"]:
+                overlap_text = ", ".join([f"{name}({count})" for name, count in preview["overlaps"].items()])
+                st.info(f"겹치는 라인: {overlap_text}")
+            
+            st.write("**처음 5개 방문 일정:**")
+            for v in preview["visits"][:5]:
+                weekend_str = "🔴 주말" if v["is_weekend"] else ""
+                st.write(f"- Day {v['day']}: {v['date'].strftime('%Y-%m-%d (%A)')} {weekend_str}")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("✅ 확인 및 추가", key="confirm_manual", type="primary"):
                     new_schedule = {
-                        "name": line_name,
-                        "template": selected_template,
-                        "start_date": manual_start_date.strftime("%Y-%m-%d"),
+                        "name": preview["line_name"],
+                        "template": preview["template"],
+                        "start_date": preview["start_date"].strftime("%Y-%m-%d"),
                         "status": "active",
-                        "weekend_count": weekend_count,
+                        "weekend_count": preview["weekend_count"],
                         "visits": [
                             {
                                 "day": v["day"],
                                 "date": v["date"].strftime("%Y-%m-%d"),
                                 "is_weekend": v["is_weekend"]
                             }
-                            for v in visits
+                            for v in preview["visits"]
                         ]
                     }
                     
                     schedules.append(new_schedule)
                     save_schedules(schedules)
-                    st.success(f"✅ {line_name} 라인이 추가되었습니다!")
+                    st.session_state.preview_schedule = None  # 미리보기 초기화
+                    st.success(f"✅ {preview['line_name']} 라인이 추가되었습니다!")
                     st.balloons()
-                    st.rerun()
+                    try:
+                        st.rerun()
+                    except:
+                        st.experimental_rerun()
+            
+            with col2:
+                if st.button("❌ 취소", key="cancel_manual"):
+                    st.session_state.preview_schedule = None
+                    try:
+                        st.rerun()
+                    except:
+                        st.experimental_rerun()
 
 # ==================== 프로토콜 관리 ====================
 elif menu == "📝 프로토콜 관리":
@@ -465,14 +497,20 @@ elif menu == "📝 프로토콜 관리":
                             }
                             save_protocols(protocols)
                             st.success("저장되었습니다!")
-                            st.rerun()
+                            try:
+                                st.rerun()
+                            except:
+                                st.experimental_rerun()
                     
                     with col2:
                         if st.button("🗑️ 삭제", key=f"delete_{selected_protocol_template}_{day}"):
                             del protocols[selected_protocol_template][day_str]
                             save_protocols(protocols)
                             st.success("삭제되었습니다!")
-                            st.rerun()
+                            try:
+                                st.rerun()
+                            except:
+                                st.experimental_rerun()
     
     with tab2:
         st.subheader("새 프로토콜 추가")
