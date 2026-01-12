@@ -430,18 +430,12 @@ elif menu == "➕ 새 라인 추가":
                     st.session_state.preview_schedule = None  # 미리보기 초기화
                     st.success(f"✅ {preview['line_name']} 라인이 추가되었습니다!")
                     st.balloons()
-                    try:
-                        st.rerun()
-                    except:
-                        st.experimental_rerun()
+                    st.rerun()
             
             with col2:
                 if st.button("❌ 취소", key="cancel_manual"):
                     st.session_state.preview_schedule = None
-                    try:
-                        st.rerun()
-                    except:
-                        st.experimental_rerun()
+                    st.rerun()
 
 # ==================== 프로토콜 관리 ====================
 elif menu == "📝 프로토콜 관리":
@@ -497,20 +491,14 @@ elif menu == "📝 프로토콜 관리":
                             }
                             save_protocols(protocols)
                             st.success("저장되었습니다!")
-                            try:
-                                st.rerun()
-                            except:
-                                st.experimental_rerun()
+                            st.rerun()
                     
                     with col2:
                         if st.button("🗑️ 삭제", key=f"delete_{selected_protocol_template}_{day}"):
                             del protocols[selected_protocol_template][day_str]
                             save_protocols(protocols)
                             st.success("삭제되었습니다!")
-                            try:
-                                st.rerun()
-                            except:
-                                st.experimental_rerun()
+                            st.rerun()
     
     with tab2:
         st.subheader("새 프로토콜 추가")
@@ -620,16 +608,29 @@ elif menu == "📋 템플릿 관리":
 
 # ==================== 캘린더 뷰 ====================
 elif menu == "📊 캘린더 뷰":
-    st.header("전체 스케줄 캘린더")
+    st.header("📅 캘린더")
     
     active_schedules = [s for s in schedules if s.get("status") != "completed"]
     
     if not active_schedules:
         st.info("현재 진행중인 라인이 없습니다.")
     else:
-        # 날짜 범위 선택
-        view_start = st.date_input("시작 날짜", datetime.now())
-        view_days = st.slider("표시할 기간 (일)", 7, 60, 30)
+        # 월 선택
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            selected_year = st.selectbox("년도", range(2024, 2030), index=2)  # 2026 default
+        with col2:
+            selected_month = st.selectbox("월", range(1, 13), index=datetime.now().month - 1)
+        
+        # 선택한 월의 첫날과 마지막날
+        first_day = datetime(selected_year, selected_month, 1).date()
+        if selected_month == 12:
+            last_day = datetime(selected_year + 1, 1, 1).date() - timedelta(days=1)
+        else:
+            last_day = datetime(selected_year, selected_month + 1, 1).date() - timedelta(days=1)
+        
+        # 달력 시작일 (월요일부터 시작하도록 조정)
+        calendar_start = first_day - timedelta(days=first_day.weekday())
         
         # 날짜별 방문 정리
         calendar_data = {}
@@ -637,7 +638,7 @@ elif menu == "📊 캘린더 뷰":
             for visit in schedule['visits']:
                 visit_date = datetime.strptime(visit['date'], "%Y-%m-%d").date()
                 
-                if view_start <= visit_date <= view_start + timedelta(days=view_days):
+                if calendar_start <= visit_date <= last_day + timedelta(days=7):
                     if visit_date not in calendar_data:
                         calendar_data[visit_date] = []
                     
@@ -652,48 +653,125 @@ elif menu == "📊 캘린더 뷰":
                     calendar_data[visit_date].append({
                         "name": schedule['name'],
                         "day": visit['day'],
-                        "is_weekend": visit['is_weekend'],
                         "template": template_name,
                         "protocol": protocol_info
                     })
         
-        # 주별로 표시
-        current_date = view_start
-        week_num = 0
+        # CSS 스타일
+        st.markdown("""
+        <style>
+        .calendar-day {
+            min-height: 120px;
+            padding: 5px;
+            border: 1px solid #ddd;
+            background-color: white;
+        }
+        .calendar-day-header {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        .weekend {
+            background-color: #ffebee !important;
+        }
+        .other-month {
+            background-color: #f5f5f5 !important;
+            opacity: 0.6;
+        }
+        .today {
+            border: 3px solid #1976d2 !important;
+            background-color: #e3f2fd !important;
+        }
+        .visit-item {
+            font-size: 0.85em;
+            padding: 2px 4px;
+            margin: 2px 0;
+            background-color: #e8f5e9;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        </style>
+        """, unsafe_allow_html=True)
         
-        while current_date <= view_start + timedelta(days=view_days):
-            week_start = current_date
-            week_end = current_date + timedelta(days=6)
+        # 요일 헤더
+        st.markdown("### " + first_day.strftime('%Y년 %m월'))
+        weekdays = ["월", "화", "수", "목", "금", "토", "일"]
+        cols = st.columns(7)
+        for i, day in enumerate(weekdays):
+            with cols[i]:
+                st.markdown(f"**{day}**")
+        
+        # 달력 그리기 (주 단위)
+        current_date = calendar_start
+        today = datetime.now().date()
+        
+        while current_date <= last_day + timedelta(days=7):
+            cols = st.columns(7)
             
-            st.subheader(f"Week {week_num + 1}: {week_start.strftime('%Y-%m-%d')} ~ {week_end.strftime('%Y-%m-%d')}")
-            
-            # 날짜별 상세 정보 (프로토콜 포함)
             for i in range(7):
-                day_date = week_start + timedelta(days=i)
-                
-                if day_date in calendar_data:
-                    visits = calendar_data[day_date]
+                with cols[i]:
+                    day_date = current_date + timedelta(days=i)
+                    
+                    # 날짜 스타일 결정
                     is_weekend = day_date.weekday() >= 5
+                    is_other_month = day_date.month != selected_month
+                    is_today = day_date == today
                     
-                    # 날짜 헤더
-                    if is_weekend:
-                        st.markdown(f"### :red[{day_date.strftime('%Y-%m-%d (%A)')}] - 방문 {len(visits)}건")
+                    # 날짜 표시
+                    date_str = day_date.strftime('%d')
+                    if is_today:
+                        st.markdown(f"**:blue[{date_str}일]** 📍")
+                    elif is_weekend:
+                        st.markdown(f"**:red[{date_str}일]**")
+                    elif is_other_month:
+                        st.markdown(f":gray[{date_str}일]")
                     else:
-                        st.markdown(f"### {day_date.strftime('%Y-%m-%d (%A)')} - 방문 {len(visits)}건")
+                        st.markdown(f"**{date_str}일**")
                     
-                    # 각 방문 항목
-                    for visit in visits:
-                        with st.expander(f"📌 {visit['name']} - Day {visit['day']} ({visit['template']})"):
-                            if visit['protocol']:
-                                st.write(f"**{visit['protocol']['title']}**")
-                                st.text(visit['protocol']['protocol'])
-                            else:
-                                st.info(f"Day {visit['day']}에 대한 프로토콜이 없습니다. '프로토콜 관리' 메뉴에서 추가하세요.")
+                    # 방문 일정이 있으면 표시
+                    if day_date in calendar_data:
+                        visits = calendar_data[day_date]
+                        
+                        for visit in visits:
+                            # 간단한 요약 표시
+                            visit_summary = f"{visit['name']} (D{visit['day']})"
+                            
+                            # Expander로 프로토콜 상세 표시
+                            with st.expander(f"📌 {visit_summary}", expanded=False):
+                                st.caption(f"템플릿: {visit['template']}")
+                                
+                                if visit['protocol']:
+                                    st.markdown(f"**{visit['protocol']['title']}**")
+                                    st.divider()
+                                    
+                                    # 프로토콜 내용을 라인별로 표시
+                                    protocol_lines = visit['protocol']['protocol'].split('\n')
+                                    for line in protocol_lines:
+                                        if line.strip():
+                                            st.markdown(f"- {line.strip()}")
+                                else:
+                                    st.info("프로토콜 없음")
+                                    st.caption("프로토콜 관리 메뉴에서 추가하세요")
                     
-                    st.divider()
+                    st.markdown("---")
             
-            current_date = week_end + timedelta(days=1)
-            week_num += 1
+            current_date += timedelta(days=7)
+            
+            # 다음 달로 넘어가면 중단
+            if current_date.month != selected_month and current_date > last_day:
+                break
+        
+        # 범례
+        st.divider()
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.markdown("📍 **오늘**")
+        with col2:
+            st.markdown(":red[**주말**]")
+        with col3:
+            st.markdown("📌 **방문 예정**")
+        with col4:
+            total_visits = sum(len(v) for v in calendar_data.values() if any(d >= today for d in [k for k in calendar_data.keys() if k >= today]))
+            st.metric("이번 달 총 방문", len([v for d, v in calendar_data.items() if d.month == selected_month]))
 
 # 푸터
 st.sidebar.divider()
