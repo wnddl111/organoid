@@ -629,6 +629,7 @@ elif menu == "👥 인원 관리":
                 
                 # 미배정 방문 수 계산
                 unassigned_visits = []
+                assigned_visits = []
                 for schedule_idx, schedule in enumerate(active_schedules):
                     for visit_idx, visit in enumerate(schedule['visits']):
                         visit_date = datetime.strptime(visit['date'], "%Y-%m-%d").date()
@@ -640,108 +641,159 @@ elif menu == "👥 인원 관리":
                                     'date': visit_date,
                                     'is_weekend': visit_date.weekday() >= 5
                                 })
+                            else:
+                                assigned_visits.append({
+                                    'schedule_idx': schedule_idx,
+                                    'visit_idx': visit_idx,
+                                    'date': visit_date,
+                                    'is_weekend': visit_date.weekday() >= 5
+                                })
                 
                 weekday_count = sum(1 for v in unassigned_visits if not v['is_weekend'])
                 weekend_count = sum(1 for v in unassigned_visits if v['is_weekend'])
                 
-                col1, col2, col3 = st.columns(3)
+                col1, col2, col3, col4 = st.columns(4)
                 with col1:
                     st.metric("미배정 방문", len(unassigned_visits))
                 with col2:
                     st.metric("평일", weekday_count)
                 with col3:
                     st.metric("주말", weekend_count)
-                
-                if st.button("⚖️ 공평 배정 시작", type="primary"):
-                    import random
-                    
-                    # 각 사람의 배정 횟수 추적
-                    person_counts = {p['name']: {'weekday': 0, 'weekend': 0, 'total': 0} for p in people}
-                    
-                    # 방문을 평일/주말로 분리
-                    weekday_visits = [v for v in unassigned_visits if not v['is_weekend']]
-                    weekend_visits = [v for v in unassigned_visits if v['is_weekend']]
-                    
-                    # 랜덤 섞기
-                    random.shuffle(weekday_visits)
-                    random.shuffle(weekend_visits)
-                    
-                    def get_least_assigned_people(is_weekend, count=2):
-                        """가장 적게 배정된 사람들 선택"""
-                        if is_weekend:
-                            sorted_people = sorted(people, key=lambda p: (
-                                person_counts[p['name']]['weekend'],
-                                person_counts[p['name']]['total']
-                            ))
-                        else:
-                            sorted_people = sorted(people, key=lambda p: (
-                                person_counts[p['name']]['weekday'],
-                                person_counts[p['name']]['total']
-                            ))
-                        
-                        # 동점자가 많으면 랜덤
-                        min_count = person_counts[sorted_people[0]['name']]['weekend' if is_weekend else 'weekday']
-                        candidates = [p for p in sorted_people if person_counts[p['name']]['weekend' if is_weekend else 'weekday'] == min_count]
-                        
-                        if len(candidates) <= count:
-                            return [p['name'] for p in candidates]
-                        else:
-                            selected = random.sample(candidates, count)
-                            return [p['name'] for p in selected]
-                    
-                    # 평일 배정
-                    for visit in weekday_visits:
-                        selected = get_least_assigned_people(is_weekend=False, count=2)
-                        
-                        # 방문에 배정
-                        schedule = active_schedules[visit['schedule_idx']]
-                        schedule['visits'][visit['visit_idx']]['assigned_people'] = selected
-                        
-                        # 카운트 업데이트
-                        for person_name in selected:
-                            person_counts[person_name]['weekday'] += 1
-                            person_counts[person_name]['total'] += 1
-                    
-                    # 주말 배정
-                    for visit in weekend_visits:
-                        selected = get_least_assigned_people(is_weekend=True, count=2)
-                        
-                        # 방문에 배정
-                        schedule = active_schedules[visit['schedule_idx']]
-                        schedule['visits'][visit['visit_idx']]['assigned_people'] = selected
-                        
-                        # 카운트 업데이트
-                        for person_name in selected:
-                            person_counts[person_name]['weekend'] += 1
-                            person_counts[person_name]['total'] += 1
-                    
-                    save_schedules(schedules)
-                    
-                    # 결과 표시
-                    st.success(f"✅ {len(unassigned_visits)}건의 방문에 공평하게 배정되었습니다!")
-                    
-                    st.divider()
-                    st.subheader("배정 결과")
-                    
-                    # 테이블로 결과 표시
-                    result_data = []
-                    for person in people:
-                        name = person['name']
-                        result_data.append({
-                            "이름": name,
-                            "평일": person_counts[name]['weekday'],
-                            "주말": person_counts[name]['weekend'],
-                            "총합": person_counts[name]['total']
-                        })
-                    
-                    df = pd.DataFrame(result_data)
-                    st.dataframe(df, use_container_width=True, hide_index=True)
-                    
-                    st.balloons()
-                    st.rerun()
+                with col4:
+                    st.metric("이미 배정됨", len(assigned_visits))
                 
                 st.divider()
-                st.caption("⚠️ 주의: 이미 배정된 방문은 덮어쓰지 않습니다. 재배정하려면 캘린더에서 개별 삭제 후 다시 배정하세요.")
+                
+                # 버튼들
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    if st.button("⚖️ 공평 배정 시작", type="primary", use_container_width=True):
+                        import random
+                        
+                        # 각 사람의 배정 횟수 추적
+                        person_counts = {p['name']: {'weekday': 0, 'weekend': 0, 'total': 0} for p in people}
+                        
+                        # 방문을 평일/주말로 분리
+                        weekday_visits = [v for v in unassigned_visits if not v['is_weekend']]
+                        weekend_visits = [v for v in unassigned_visits if v['is_weekend']]
+                        
+                        # 랜덤 섞기
+                        random.shuffle(weekday_visits)
+                        random.shuffle(weekend_visits)
+                        
+                        def get_least_assigned_people(is_weekend, count=2):
+                            """가장 적게 배정된 사람들 선택"""
+                            if is_weekend:
+                                sorted_people = sorted(people, key=lambda p: (
+                                    person_counts[p['name']]['weekend'],
+                                    person_counts[p['name']]['total']
+                                ))
+                            else:
+                                sorted_people = sorted(people, key=lambda p: (
+                                    person_counts[p['name']]['weekday'],
+                                    person_counts[p['name']]['total']
+                                ))
+                            
+                            # 동점자가 많으면 랜덤
+                            min_count = person_counts[sorted_people[0]['name']]['weekend' if is_weekend else 'weekday']
+                            candidates = [p for p in sorted_people if person_counts[p['name']]['weekend' if is_weekend else 'weekday'] == min_count]
+                            
+                            if len(candidates) <= count:
+                                return [p['name'] for p in candidates]
+                            else:
+                                selected = random.sample(candidates, count)
+                                return [p['name'] for p in selected]
+                        
+                        # 평일 배정
+                        for visit in weekday_visits:
+                            selected = get_least_assigned_people(is_weekend=False, count=2)
+                            
+                            # 방문에 배정
+                            schedule = active_schedules[visit['schedule_idx']]
+                            schedule['visits'][visit['visit_idx']]['assigned_people'] = selected
+                            
+                            # 카운트 업데이트
+                            for person_name in selected:
+                                person_counts[person_name]['weekday'] += 1
+                                person_counts[person_name]['total'] += 1
+                        
+                        # 주말 배정
+                        for visit in weekend_visits:
+                            selected = get_least_assigned_people(is_weekend=True, count=2)
+                            
+                            # 방문에 배정
+                            schedule = active_schedules[visit['schedule_idx']]
+                            schedule['visits'][visit['visit_idx']]['assigned_people'] = selected
+                            
+                            # 카운트 업데이트
+                            for person_name in selected:
+                                person_counts[person_name]['weekend'] += 1
+                                person_counts[person_name]['total'] += 1
+                        
+                        save_schedules(schedules)
+                        
+                        # 결과 표시
+                        st.success(f"✅ {len(unassigned_visits)}건의 방문에 공평하게 배정되었습니다!")
+                        
+                        st.divider()
+                        st.subheader("배정 결과")
+                        
+                        # 테이블로 결과 표시
+                        result_data = []
+                        for person in people:
+                            name = person['name']
+                            result_data.append({
+                                "이름": name,
+                                "평일": person_counts[name]['weekday'],
+                                "주말": person_counts[name]['weekend'],
+                                "총합": person_counts[name]['total']
+                            })
+                        
+                        df = pd.DataFrame(result_data)
+                        st.dataframe(df, use_container_width=True, hide_index=True)
+                        
+                        st.balloons()
+                        st.rerun()
+                
+                with col2:
+                    if len(assigned_visits) > 0:
+                        if st.button("🗑️ 선택 기간 배정 전체 삭제", type="secondary", use_container_width=True):
+                            # 확인 모달 대신 session state 사용
+                            if 'confirm_clear' not in st.session_state:
+                                st.session_state.confirm_clear = False
+                            
+                            if not st.session_state.confirm_clear:
+                                st.session_state.confirm_clear = True
+                                st.rerun()
+                    else:
+                        st.button("🗑️ 선택 기간 배정 전체 삭제", disabled=True, use_container_width=True)
+                
+                # 삭제 확인
+                if st.session_state.get('confirm_clear', False):
+                    st.warning(f"⚠️ 정말로 선택한 기간({assign_start} ~ {assign_end})의 배정을 모두 삭제하시겠습니까?")
+                    st.write(f"**{len(assigned_visits)}건의 배정이 삭제됩니다.**")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("✅ 확인 - 삭제", type="primary", use_container_width=True):
+                            # 배정 삭제
+                            for visit_info in assigned_visits:
+                                schedule = active_schedules[visit_info['schedule_idx']]
+                                schedule['visits'][visit_info['visit_idx']]['assigned_people'] = []
+                            
+                            save_schedules(schedules)
+                            st.session_state.confirm_clear = False
+                            st.success(f"✅ {len(assigned_visits)}건의 배정이 삭제되었습니다!")
+                            st.rerun()
+                    
+                    with col2:
+                        if st.button("❌ 취소", use_container_width=True):
+                            st.session_state.confirm_clear = False
+                            st.rerun()
+                
+                st.divider()
+                st.caption("💡 팁: 재배정하려면 먼저 '전체 삭제'로 기존 배정을 지운 후 다시 배정하세요.")
 
 # ==================== 템플릿 관리 ====================
 elif menu == "📋 템플릿 관리":
