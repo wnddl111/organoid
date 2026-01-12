@@ -72,7 +72,11 @@ def count_weekend_visits(visits):
 
 def find_overlaps(new_visits, existing_schedules):
     """기존 스케줄과의 겹침 찾기"""
-    new_dates = set(v["date"].date() for v in new_visits)
+    # new_visits의 date는 이미 datetime 객체이므로 .date()로 변환
+    new_dates = set(
+        v["date"].date() if isinstance(v["date"], datetime) else v["date"]
+        for v in new_visits
+    )
     overlaps = {}
     
     for schedule in existing_schedules:
